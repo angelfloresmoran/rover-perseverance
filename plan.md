@@ -3,7 +3,7 @@
 Este archivo tiene una sección por fase:
 - **Fase 1, parte 1:** el plan tal como se aprobó antes de ejecutar.
 - **Fase 1, parte 2:** lo que se hizo, cómo se hizo, para qué sirve cada componente y dónde encontrarlo.
-- **Fase 2:** sombras creíbles y viento visible. Plan **pendiente de aprobación**, al final del archivo.
+- **Fase 2:** sombras creíbles y viento visible, al final del archivo. **Bloque A hecho; bloque B pendiente de aprobación.**
 
 Regla de trabajo desde la fase 2: cada fase se planifica aquí primero y no se implementa hasta que el ingeniero la confirme.
 
@@ -163,7 +163,7 @@ No haré commits a menos que me lo pidas; los cambios quedan en el árbol de tra
 
 # Fase 2: sombras creíbles y viento visible
 
-**Estado:** pendiente de aprobación. Todavía no se ha cambiado código.
+**Estado:** bloque A implementado y a la espera de revisión del ingeniero. Bloque B sin empezar: requiere confirmación. El plan se conserva como se aprobó; lo hecho está en "Fase 2: registro del bloque A", al final.
 
 ## Objetivo
 Que la escena se vea más real en dos aspectos: las sombras anclan los objetos al suelo y se nota que hay viento moviendo polvo y arena.
@@ -186,7 +186,7 @@ Medido con cámara fija, sin cambiar archivos del repo, en Chrome invisible con 
 | Píxeles que el polvo cambia más de 1 % | 0.57 % de la imagen |
 | Píxeles que el polvo cambia más de 3 % | **0.02 %** de la imagen |
 | Luz que conservan las zonas en sombra, respecto a la misma zona sin sombra | de 0.72 (casi invisible) a 0.11 (mancha muy oscura) |
-| Dibujado por cuadro | 48 llamadas, 6.64 millones de triángulos |
+| Dibujado por cuadro | 48 llamadas, 6.64 millones de triángulos. **Corregido:** esa medición sumó dos cuadros; lo real son 24 llamadas y 3.32 millones |
 | Tiempo por cuadro a 1600×900 | mediana 16.7 ms, percentil 95 16.8 ms |
 | Tiempo por cuadro a 2592×1675 (pantalla Retina con el límite actual de 1.5×) | mediana 16.7 ms, percentil 95 **33.4 ms** |
 
@@ -319,3 +319,66 @@ Se permiten hasta 3 rondas de ajuste por bloque. Si tras la tercera falta algo, 
 | Remolinos frecuentes y ráfagas que levantan polvo | [Newman et al. 2022](https://addi.ehu.eus/handle/10810/58188?show=full) | Solo resumen; leer completo en la etapa 4 |
 | Distancia Sol-Marte | [NASA Mars Fact Sheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/marsfact.html) | Consultada en copia archivada |
 | Sol de 0.35° visto desde Marte, penumbra y transmisión | Cálculo propio | Aproximación de primer orden |
+
+---
+
+# Fase 2: registro del bloque A
+
+## Estado
+- Etapas 0 a 3 hechas. **Sin commit:** los cambios están en el árbol de trabajo.
+- `npm test`: 22 de 22. `npm run check`: 0 errores, 0 excepciones, 0 peticiones fallidas, 0 advertencias. `npm run build`: compila, con el aviso de que el paquete supera 500 kB.
+- La versión generada por `npm run build` no se abrió en un navegador; eso sigue en la etapa 7.
+- ADR 0002 y leyenda: quedan para la etapa 7, en el bloque B.
+
+## Resultados
+Medido con `npm run measure` a `t = 30`, con cámara fija. En tiempos, la cámara se mueve con el paneo.
+
+| Medida | Antes | Después | Criterio |
+|---|---|---|---|
+| Luz conservada en sombra, mediana | 0.651 | **0.445** | 0.40–0.65: cumple |
+| Luz conservada en sombra, mínimo | 0.11 | **0.221** | 0.20 o más: cumple |
+| Mismo `t`, misma imagen | Sin medición | **0 píxeles distintos** | Cumple |
+| Cuadro a 1600×900, percentil 95 | 16.7 ms | 16.7 ms | 16.8 ms o menos: cumple |
+| Cuadro a 2592×1675, mediana y percentil 95 | 16.7 y 33.3 ms | 16.7 y 33.4 ms | 16.7 y 33.4 ms o menos: cumple |
+| Cuadros en 6 s a 2592×1675 | 306 | 302 | Sin criterio |
+| Triángulos por cuadro | 3.32 millones | **1.98 millones** | Sin criterio |
+| GPU a 1600×900, mediana | 12.7 ms | 14.3 ms | Sin criterio |
+| GPU a 1600×900 al recalcular las 3 cascadas | 14.0 ms | 16.2 ms | Sin criterio |
+
+- **Sombras:** nacen pegadas a la base, y en los recortes ampliados ya no se ven los puntos ni la línea clara. Es una revisión visual, no una medida.
+- **Tiempo de GPU a 2592×1675:** da unos 46 ms, más que el intervalo real entre cuadros, así que ese valor solo sirve para comparar corridas.
+- **Polvo:** sin cambios (0.02 % de píxeles sobre 3 %). Es trabajo del bloque B.
+
+## Decisiones durante la ejecución
+| Decisión | Motivo |
+|---|---|
+| Sol a 16° | Recomendación del plan, aplicada sin respuesta explícita del ingeniero. Se puede revertir en `src/scene/look.js`. Hay captura alternativa a 8.5° |
+| La sombra bloquea 76 % de la luz directa, no 100 % | Aproxima la aureola que forma el polvo alrededor del sol. Con 85 % los núcleos sobre la duna derecha bajaban a 0.15 |
+| Rocas proyectan con ambas caras (`shadowSide: DoubleSide`) | Con solo las caras traseras la luz se colaba en la línea de contacto con el suelo |
+| Piedras más pequeñas sin sombra | Costaban unos 9 ms al recalcular (19.5 a 28.5 ms) y casi no se notaban |
+| Menos detalle: piedras pequeñas de 1 a 0, medianas de 3 a 2 | No estaba en el plan. Las cascadas bajaron los cuadros en Retina a 265; así vuelven a 302 sin diferencia visible en los recortes |
+| Se mantiene la transición entre cascadas (`fade`) | Quitarla no ahorró tiempo medible |
+| Luz: sol 4.6, relleno 0.92, rebote del suelo más cálido | Ajustado por medición para cumplir los criterios |
+
+## Componentes nuevos o modificados
+| Archivo | Para qué sirve | Qué tocar aquí |
+|---|---|---|
+| `src/scene/shadows.js` (nuevo) | Cascadas, caché de mapas y unión de parches de shader | `CASCADES`, `SHADOW_STRENGTH`, `SUN_INTENSITY` |
+| `src/scene/lighting.js` | Crea las sombras y el relleno del cielo | Relleno y rebote |
+| `src/scene/look.js` | Dirección del sol | Elevación en `SUN_DIRECTION` |
+| `src/domain/contact-occlusion.js` (nuevo) | Oscurecimiento junto a las rocas, sin Three.js; modelo aproximado | Altura efectiva y alcance |
+| `src/scene/terrain.js` | Hornea esa oclusión en una textura y la aplica a la luz indirecta | `CONTACT_REGION` |
+| `src/scene/rocks.js` | Devuelve `placements` y oscurece la parte baja de las rocas | `TIERS`, `FOOTPRINT_RADIUS` |
+| `src/frozen-time.js` (nuevo) | Lee y valida `?t=<segundos>` | Validación |
+| `src/main.js` | Congela tiempo y paneo con `?t=`, actualiza sombras en cada cuadro | Orden del bucle |
+| `scripts/measure-look.mjs` (nuevo) | `npm run measure`: captura con y sin cada efecto, escribe `.check/metrics.json` | Tiempo y resoluciones |
+| `scripts/lib/look-metrics.mjs` (nuevo) | Métricas puras de imagen y tiempo | Umbrales |
+| `scripts/lib/dev-server.mjs` (nuevo) | Servidor y Chrome compartidos por `check` y `measure` | Argumentos de Chrome |
+| `test/contact-occlusion.test.js`, `test/frozen-time.test.js`, `test/look-metrics.test.js` (nuevos) | 17 pruebas nuevas | |
+| `.check/bloque-a/` (no versionado) | Capturas `antes`, `despues-sol-16` y `alternativa-sol-8.5` | |
+
+## Límites y pendientes
+- **Sin comprobar en movimiento:** el giro de cámara se revisó con capturas, sin huecos ni errores, pero una captura no muestra si la sombra salta al recalcularse. Hay que mirarlo en pantalla.
+- **Margen para el bloque B:** a 1600×900 quedan unos 2.4 ms de GPU, y en Retina ya se pierden cuadros. Es el principal riesgo del polvo; posiblemente haya que bajar el `pixelRatio`.
+- **Alternativa a 8.5°:** solo se capturó; no se midió contra los criterios.
+- **Vistos en otros ángulos:** las rocas iluminadas de frente tienen manchas oscuras muy marcadas (ya existían) y mirando en dirección opuesta al sol se repiten bandas en las dunas (etapa 6). Las manchas no están en el alcance de ningún bloque.

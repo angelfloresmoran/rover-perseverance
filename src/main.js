@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { createTerrain } from './domain/terrain-height.js';
+import { parseFrozenTime_s } from './frozen-time.js';
 import { createDust } from './scene/dust.js';
 import { createLighting } from './scene/lighting.js';
 import { HORIZON_COLOR } from './scene/look.js';
@@ -46,18 +47,17 @@ controls.update();
 const sky = createSky();
 const moons = createMoons();
 const dust = createDust();
-const { group: lights, sun } = createLighting();
-scene.add(sky.mesh, moons.group, dust.points, lights, createTerrainMesh(terrain), createRocks(terrain));
+const { group: lights, shadows } = createLighting(camera);
+const rocks = createRocks(terrain, shadows);
+scene.add(sky.mesh, moons.group, dust.points, lights, createTerrainMesh(terrain, shadows, rocks.placements), rocks.group);
 
 const post = createPost(renderer, scene, camera);
 
-// El terreno y el sol no cambian: basta con calcular las sombras una vez.
-sun.shadow.autoUpdate = false;
-sun.shadow.needsUpdate = true;
+const frozenTime_s = parseFrozenTime_s(location.search);
 
 // Paneo lento hasta que el usuario toma el control de la vista.
 const prefersReducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
-let driftEnabled = !prefersReducedMotion;
+let driftEnabled = !prefersReducedMotion && frozenTime_s === null;
 controls.addEventListener('start', () => {
   driftEnabled = false;
 });
@@ -81,16 +81,18 @@ function keepCameraAboveGround() {
 addEventListener('resize', () => {
   camera.aspect = innerWidth / innerHeight;
   camera.updateProjectionMatrix();
+  shadows.refit();
   renderer.setSize(innerWidth, innerHeight);
   post.setSize(innerWidth, innerHeight);
 });
 
 let frames = 0;
 renderer.setAnimationLoop((now_ms) => {
-  const time_s = now_ms / 1000;
+  const time_s = frozenTime_s ?? now_ms / 1000;
   if (driftEnabled) applyDrift(time_s);
   controls.update();
   keepCameraAboveGround();
+  shadows.update();
   sky.update(time_s, camera);
   moons.update(camera);
   dust.update(time_s);

@@ -4,12 +4,15 @@ import { GLSL_NOISE } from './glsl-noise.js';
 
 // Muchas piedras pequeñas y pocas grandes. Radio de dispersión medido desde el centro de la vista.
 const TIERS = [
-  { count: 14000, detail: 1, radius_m: 170, minScale_m: 0.05, maxScale_m: 0.28, castShadow: false },
-  { count: 3600, detail: 3, radius_m: 620, minScale_m: 0.28, maxScale_m: 1.7, castShadow: true },
+  { count: 14000, detail: 0, radius_m: 170, minScale_m: 0.05, maxScale_m: 0.28, castShadow: false },
+  { count: 3600, detail: 2, radius_m: 620, minScale_m: 0.28, maxScale_m: 1.7, castShadow: true },
   { count: 170, detail: 6, radius_m: 1100, minScale_m: 1.7, maxScale_m: 6.5, castShadow: true },
 ];
 
 const VIEW_CENTER = { x: 0, z: -180 };
+
+// Los recortes dejan la roca más pequeña que su escala: radio medio de apoyo como fracción de ella.
+const FOOTPRINT_RADIUS = 0.85;
 
 // Rocas colocadas a mano para dar primer plano a la composición: [x, z, escala_m].
 const HERO_ROCKS = [
@@ -66,13 +69,15 @@ function patchShader(shader) {
       '#include <common>',
       `#include <common>
       varying float vUpness;
-      varying vec3 vRockPos;`,
+      varying vec3 vRockPos;
+      varying float vBaseHeight;`,
     )
     .replace(
       '#include <beginnormal_vertex>',
       `#include <beginnormal_vertex>
       vUpness = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * objectNormal).y;
-      vRockPos = (instanceMatrix * vec4(position, 1.0)).xyz;`,
+      vRockPos = (instanceMatrix * vec4(position, 1.0)).xyz;
+      vBaseHeight = position.y;`,
     );
   shader.fragmentShader = shader.fragmentShader
     .replace(
@@ -80,7 +85,14 @@ function patchShader(shader) {
       `#include <common>
       varying float vUpness;
       varying vec3 vRockPos;
+      varying float vBaseHeight;
       ${GLSL_NOISE}`,
+    )
+    .replace(
+      '#include <lights_fragment_end>',
+      `#include <lights_fragment_end>
+      // La parte baja de la roca ve menos cielo.
+      reflectedLight.indirectDiffuse *= mix(0.5, 1.0, smoothstep(-0.1, 0.55, vBaseHeight));`,
     )
     .replace(
       '#include <color_fragment>',
@@ -105,9 +117,11 @@ function patchShader(shader) {
     );
 }
 
-function createMaterial() {
-  const material = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 });
+function createMaterial(shadows) {
+  // Con solo las caras traseras, la luz se cuela en la línea donde la roca toca el suelo.
+  const material = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0, shadowSide: THREE.DoubleSide });
   material.onBeforeCompile = patchShader;
+  shadows.attach(material, 'rocks');
   return material;
 }
 
@@ -116,7 +130,8 @@ function rockColor(random, target) {
   return target.setRGB(0.21 * value, 0.125 * value, 0.09 * value);
 }
 
-function placeInstance(mesh, index, terrain, random, x, z, scale_m, dummy, color) {
+function placeInstance(mesh, index, terrain, random, x, z, scale_m, dummy, color, placements) {
+  placements.push({ x_m: x, z_m: z, radius_m: scale_m * FOOTPRINT_RADIUS });
   dummy.position.set(x, terrain.heightAt_m(x, z) - scale_m * 0.1, z);
   dummy.rotation.set((random() - 0.5) * 0.5, random() * Math.PI * 2, (random() - 0.5) * 0.5);
   dummy.scale.setScalar(scale_m);
@@ -125,7 +140,7 @@ function placeInstance(mesh, index, terrain, random, x, z, scale_m, dummy, color
   mesh.setColorAt(index, rockColor(random, color));
 }
 
-function createTier(tier, terrain, random, material) {
+function createTier(tier, terrain, random, material, placements) {
   const mesh = new THREE.InstancedMesh(createRockGeometry(tier.detail, random), material, tier.count);
   mesh.castShadow = tier.castShadow;
   mesh.receiveShadow = true;
@@ -142,29 +157,30 @@ function createTier(tier, terrain, random, material) {
     if (random() > 0.12 + 0.88 * terrain.rockinessAt(x, z)) continue;
     // Distribución de ley de potencia: predominan los tamaños pequeños.
     const scale_m = tier.minScale_m * (tier.maxScale_m / tier.minScale_m) ** (random() ** 2.4);
-    placeInstance(mesh, placed++, terrain, random, x, z, scale_m, dummy, color);
+    placeInstance(mesh, placed++, terrain, random, x, z, scale_m, dummy, color, placements);
   }
   mesh.count = placed;
   return mesh;
 }
 
-function createHeroRocks(terrain, random, material) {
+function createHeroRocks(terrain, random, material, placements) {
   const mesh = new THREE.InstancedMesh(createRockGeometry(14, random), material, HERO_ROCKS.length);
   mesh.castShadow = true;
   mesh.receiveShadow = true;
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
   HERO_ROCKS.forEach(([x, z, scale_m], index) => {
-    placeInstance(mesh, index, terrain, random, x, z, scale_m, dummy, color);
+    placeInstance(mesh, index, terrain, random, x, z, scale_m, dummy, color, placements);
   });
   return mesh;
 }
 
-export function createRocks(terrain, seed = 21) {
+export function createRocks(terrain, shadows, seed = 21) {
   const random = createRandom(seed);
-  const material = createMaterial();
+  const material = createMaterial(shadows);
   const group = new THREE.Group();
-  for (const tier of TIERS) group.add(createTier(tier, terrain, random, material));
-  group.add(createHeroRocks(terrain, random, material));
-  return group;
+  const placements = [];
+  for (const tier of TIERS) group.add(createTier(tier, terrain, random, material, placements));
+  group.add(createHeroRocks(terrain, random, material, placements));
+  return { group, placements };
 }

@@ -1,9 +1,28 @@
 import * as THREE from 'three';
+import { bakeContactOcclusion } from '../domain/contact-occlusion.js';
 import { GLSL_NOISE } from './glsl-noise.js';
 import { HORIZON_COLOR, SUN_COLOR, SUN_DIRECTION } from './look.js';
 
 const HALF_SIZE_M = 7000;
 const SEGMENTS = 640;
+
+// Zona horneada: 0.31 m por texel alrededor de lo que se ve de cerca.
+const CONTACT_REGION = { centerX_m: 0, centerZ_m: -180, halfSize_m: 640, resolution: 2048 };
+
+function createContactTexture(rockPlacements) {
+  const texture = new THREE.DataTexture(
+    bakeContactOcclusion(rockPlacements, CONTACT_REGION),
+    CONTACT_REGION.resolution,
+    CONTACT_REGION.resolution,
+    THREE.RedFormat,
+    THREE.UnsignedByteType,
+  );
+  texture.minFilter = THREE.LinearMipmapLinearFilter;
+  texture.magFilter = THREE.LinearFilter;
+  texture.generateMipmaps = true;
+  texture.needsUpdate = true;
+  return texture;
+}
 
 function buildGeometry(terrain) {
   const geometry = new THREE.PlaneGeometry(2, 2, SEGMENTS, SEGMENTS).rotateX(-Math.PI / 2);
@@ -26,10 +45,14 @@ function buildGeometry(terrain) {
   return geometry;
 }
 
-function patchShader(shader) {
+function patchShader(shader, contactTexture) {
   shader.uniforms.uSunDir = { value: SUN_DIRECTION };
   shader.uniforms.uHazeColor = { value: HORIZON_COLOR };
   shader.uniforms.uSunColor = { value: SUN_COLOR };
+  shader.uniforms.uContactMap = { value: contactTexture };
+  const { centerX_m, centerZ_m, halfSize_m } = CONTACT_REGION;
+  shader.uniforms.uContactOrigin = { value: new THREE.Vector2(centerX_m - halfSize_m, centerZ_m - halfSize_m) };
+  shader.uniforms.uContactSize_m = { value: 2 * halfSize_m };
 
   shader.vertexShader = shader.vertexShader
     .replace(
@@ -56,6 +79,9 @@ function patchShader(shader) {
       uniform vec3 uSunDir;
       uniform vec3 uHazeColor;
       uniform vec3 uSunColor;
+      uniform sampler2D uContactMap;
+      uniform vec2 uContactOrigin;
+      uniform float uContactSize_m;
       varying float vRockiness;
       varying float vDuneHeight;
       varying vec3 vGroundPos;
@@ -102,6 +128,15 @@ function patchShader(shader) {
       normal = normalize(mix(normal, (viewMatrix * vec4(0.0, 1.0, 0.0, 0.0)).xyz, smoothstep(1300.0, 3200.0, reliefDist) * 0.85));`,
     )
     .replace(
+      '#include <lights_fragment_end>',
+      `#include <lights_fragment_end>
+      // Junto a las rocas el suelo ve menos cielo. Solo afecta a la luz indirecta.
+      vec2 contactUv = (vGroundPos.xz - uContactOrigin) / uContactSize_m;
+      if (all(greaterThanEqual(contactUv, vec2(0.0))) && all(lessThanEqual(contactUv, vec2(1.0)))) {
+        reflectedLight.indirectDiffuse *= texture2D(uContactMap, contactUv).r;
+      }`,
+    )
+    .replace(
       '#include <fog_fragment>',
       `#include <fog_fragment>
       vec3 viewRay = vGroundPos - cameraPosition;
@@ -114,9 +149,11 @@ function patchShader(shader) {
     );
 }
 
-export function createTerrainMesh(terrain) {
+export function createTerrainMesh(terrain, shadows, rockPlacements) {
   const material = new THREE.MeshStandardMaterial({ roughness: 0.96, metalness: 0 });
-  material.onBeforeCompile = patchShader;
+  const contactTexture = createContactTexture(rockPlacements);
+  material.onBeforeCompile = (shader) => patchShader(shader, contactTexture);
+  shadows.attach(material, 'terrain');
   const mesh = new THREE.Mesh(buildGeometry(terrain), material);
   mesh.receiveShadow = true;
   mesh.castShadow = true;

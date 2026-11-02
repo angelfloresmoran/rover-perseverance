@@ -1,31 +1,10 @@
 // Revisión automática: abre la escena en Chrome headless, guarda una captura y lista errores.
-import { spawn } from 'node:child_process';
 import { mkdirSync } from 'node:fs';
-import { chromium } from 'playwright-core';
+import { ensureServer, launchChrome, URL_DEV } from './lib/dev-server.mjs';
 
-const URL_DEV = 'http://localhost:5173/';
 const SCREENSHOT_PATH = '.check/screenshot.png';
 const READY_TIMEOUT_MS = 90_000;
 const SETTLE_MS = 1_500;
-
-async function isServerUp() {
-  try {
-    return (await fetch(URL_DEV)).ok;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureServer() {
-  if (await isServerUp()) return null;
-  const server = spawn('npx', ['vite'], { stdio: 'ignore' });
-  for (let i = 0; i < 60; i++) {
-    if (await isServerUp()) return server;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  server.kill();
-  throw new Error(`El servidor no respondió en ${URL_DEV}`);
-}
 
 function printList(title, items) {
   console.log(`\n${title}: ${items.length}`);
@@ -39,11 +18,7 @@ const failedRequests = [];
 let readyFailure = null;
 
 const server = await ensureServer();
-const browser = await chromium.launch({
-  channel: 'chrome',
-  headless: true,
-  args: ['--use-angle=metal', '--enable-gpu', '--ignore-gpu-blocklist', '--enable-unsafe-swiftshader'],
-});
+const browser = await launchChrome();
 
 try {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } });

@@ -12,6 +12,7 @@ export function skyDirection(azimuth_deg, elevation_deg) {
   );
 }
 
-export const SUN_DIRECTION = skyDirection(23, 8.5);
+// A 8.5° la luz directa real sería muy tenue; a 16° las sombras son creíbles y el sol sigue en cuadro.
+export const SUN_DIRECTION = skyDirection(23, 16);
 export const HORIZON_COLOR = new THREE.Color().setRGB(0.84, 0.41, 0.17);
 export const SUN_COLOR = new THREE.Color().setRGB(1.0, 0.62, 0.34);
