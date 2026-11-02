@@ -1,8 +1,11 @@
 # Plan: paisaje cinematográfico de Marte con Vite y Three.js
 
-Este archivo tiene dos partes:
-- **Parte 1:** el plan tal como se aprobó antes de ejecutar.
-- **Parte 2:** lo que se hizo, cómo se hizo, para qué sirve cada componente y dónde encontrarlo.
+Este archivo tiene una sección por fase:
+- **Fase 1, parte 1:** el plan tal como se aprobó antes de ejecutar.
+- **Fase 1, parte 2:** lo que se hizo, cómo se hizo, para qué sirve cada componente y dónde encontrarlo.
+- **Fase 2:** sombras creíbles y viento visible. Plan **pendiente de aprobación**, al final del archivo.
+
+Regla de trabajo desde la fase 2: cada fase se planifica aquí primero y no se implementa hasta que el ingeniero la confirme.
 
 > **Nota:** este archivo se creó después de la ejecución. El plan se había guardado fuera del repositorio y aquí se copia sin cambios de contenido.
 
@@ -155,3 +158,164 @@ No haré commits a menos que me lo pidas; los cambios quedan en el árbol de tra
 - **Rendimiento:** no se han medido los FPS ni fijado presupuestos, como pide `CLAUDE.md`.
 - **Accesibilidad:** falta soporte de teclado.
 - **Exactitud científica:** el terreno aún no usa datos reales y las posiciones de las lunas no salen de efemérides.
+
+---
+
+# Fase 2: sombras creíbles y viento visible
+
+**Estado:** pendiente de aprobación. Todavía no se ha cambiado código.
+
+## Objetivo
+Que la escena se vea más real en dos aspectos: las sombras anclan los objetos al suelo y se nota que hay viento moviendo polvo y arena.
+
+## Corroboración de lo que quedó pendiente
+| Punto recordado | Qué dice el registro de la fase 1 | Qué se comprobó ahora |
+|---|---|---|
+| Sombras | Sí estaba: "discretas porque el sol está de frente" | Es cierto, pero la explicación era incompleta (ver causas) |
+| Polvo y viento | **No estaba** entre los pendientes | El polvo casi no se ve; se agrega por pedido del ingeniero |
+
+### Correcciones a lo registrado en la fase 1
+- **Patrón fino de la duna derecha:** se atribuyó a las ondulitas, pero viene del filtro de sombras. Sigue ahí al quitar las ondulitas y desaparece al quitar las sombras.
+- **"Nada está confirmado en git":** ya no es cierto; la fase 1 está en el commit `ecc0cf2`.
+
+## Línea base medida
+Medido con cámara fija, sin cambiar archivos del repo, en Chrome invisible con GPU Apple M1 Pro. `npm test` (5 de 5) y `npm run check` (0 errores) pasan.
+
+| Medida | Valor |
+|---|---|
+| Píxeles que el polvo cambia más de 1 % | 0.57 % de la imagen |
+| Píxeles que el polvo cambia más de 3 % | **0.02 %** de la imagen |
+| Luz que conservan las zonas en sombra, respecto a la misma zona sin sombra | de 0.72 (casi invisible) a 0.11 (mancha muy oscura) |
+| Dibujado por cuadro | 48 llamadas, 6.64 millones de triángulos |
+| Tiempo por cuadro a 1600×900 | mediana 16.7 ms, percentil 95 16.8 ms |
+| Tiempo por cuadro a 2592×1675 (pantalla Retina con el límite actual de 1.5×) | mediana 16.7 ms, percentil 95 **33.4 ms** |
+
+El tiempo por cuadro está limitado a 60 FPS, así que estas cifras no muestran cuánto margen queda. A la resolución alta ya se pierden cuadros **antes** de añadir nada.
+
+## Causas encontradas
+
+### Sombras
+1. **Bordes igual de borrosos en todas partes.** Un solo mapa cubre 1240 m, unos 0.30 m por texel, y el filtro difumina cerca de 1.2 m. Por el tamaño aparente del sol desde Marte (cerca de 0.35°, cálculo propio), la penumbra transversal a 20 m sería de unos 0.12 m. Falta una sombra nítida en la base que se suavice al alejarse.
+2. **Sombras despegadas.** `normalBias = 0.3` m separa la sombra de la base de las rocas pequeñas.
+3. **Poca diferencia entre luz y sombra.** Con el sol a 8.5°, sobre arena plana el sol aporta solo un 40 % de la luz y el relleno del cielo el 60 %.
+4. **Sin oclusión de contacto.** Nada oscurece el suelo justo bajo las rocas, y por eso parecen apoyadas encima y no asentadas.
+5. **Piedras sin sombra.** Las 14 000 más pequeñas no proyectan ninguna.
+6. **Bajar el relleno no basta.** Se probó con 0.55 y menos bias: las sombras se leen mucho mejor, pero las rocas se vuelven siluetas negras y la sombra de la duna derecha parece un agujero.
+
+### Polvo y viento
+1. **Brillo muy bajo.** El brillo base es 9 % en mezcla aditiva sobre arena y cielo ya claros.
+2. **El tamaño no respeta la resolución.** `gl_PointSize` no considera el `pixelRatio`, así que en Retina las partículas se ven hasta 1.5 veces más pequeñas que en las capturas. En la pantalla real se notan todavía menos.
+3. **Viento sin ráfagas.** Es un vector constante escrito dentro del shader; el cielo usa otro movimiento sin relación.
+4. **Solo existe un tipo de polvo.** No hay arena rasante ni plumas en las crestas, que es lo que delata el viento a simple vista.
+5. **Más puntos no daría realismo.** El polvo marciano en suspensión mide alrededor de 1 µm de radio, invisible como grano suelto. Lo que se percibe es neblina, plumas y arena en movimiento.
+
+## Decisión a confirmar: altura del sol
+Con sol bajo, la luz directa cruza mucha atmósfera. Estimación de primer orden (Beer-Lambert, atmósfera plana, profundidad óptica τ = 0.45):
+
+| Elevación | Luz directa que llega | Luz sobre suelo plano (sen e) | Sombra de una roca de 3 m |
+|---|---|---|---|
+| **8.5° (actual)** | 5 % | 0.15 | 20 m |
+| 12° | 12 % | 0.21 | 14 m |
+| **16° (recomendada)** | 20 % | 0.28 | 10.5 m |
+| 20° | 27 % | 0.34 | 8 m |
+
+**Recomendación: subir el sol a unos 16°.** A 8.5° un Marte real tendría sombras muy tenues, así que sombras marcadas con ese sol contradirían el realismo que se busca. A 16° casi se duplica la luz directa sobre el suelo, las sombras siguen largas y el sol sigue en cuadro (el borde superior está cerca de 27°). A cambio, se pierde algo de aspecto de atardecer y se acortan las sombras. Si se prefiere conservar el atardecer, se mantiene 8.5° y se documenta como licencia artística.
+
+## Alcance
+
+**Dentro**
+- Sombras en cascada, oclusión de contacto y balance de luz.
+- Modelo de viento con ráfagas, y polvo en tres capas.
+- Corrección del patrón de puntos y de las bandas de la duna derecha.
+- Banco de medición repetible.
+
+**Fuera, para fases posteriores**
+- Rover, datos reales de Jezero y efemérides.
+- Tolvaneras (dust devils): tienen respaldo científico y serían un buen añadido, pero conviene ver antes el polvo base.
+- Borde lejano del cráter y soporte de teclado.
+
+## Etapas
+
+Son dos bloques. **Al terminar el bloque A se muestran capturas y se espera confirmación antes de empezar el B.**
+
+### Bloque A: sombras
+
+**Etapa 0. Banco de medición**
+- `src/main.js`: parámetro `?t=<segundos>`, validado como número finito ≥ 0, que congela tiempo y cámara.
+- `scripts/measure-look.mjs` (`npm run measure`): captura la escena con y sin cada efecto, y escribe `.check/metrics.json` con las métricas de esta fase y el tiempo de GPU si el navegador lo permite.
+- Sirve para comparar con cifras y no a ojo. Se cumple si dos corridas con el mismo `t` dan la misma imagen.
+
+**Etapa 1. Luz**
+- `src/scene/look.js`: elevación del sol según la decisión confirmada.
+- `src/scene/lighting.js`: menos relleno del cielo y más rebote cálido desde el suelo, para que el lado oscuro de las rocas no quede negro.
+- Revisar que cielo, lunas y bruma sigan bien, porque dependen de la dirección del sol.
+
+**Etapa 2. Sombras en cascada**
+- `src/scene/lighting.js`, `terrain.js` y `rocks.js`: `CSM` de Three.js con 3 cascadas de 2048², cada una con su propio difuminado y bias. Cerca nítida, lejos suave.
+- Encadenar los parches de shader: `CSM.setupMaterial` sobrescribe `onBeforeCompile` (`CSM.js:443`), y hay que declarar `customProgramCacheKey` para que terreno y rocas no compartan programa por error.
+- Volver a calcular las sombras solo si la cámara se movió más de un umbral. El sol y el terreno no cambian, así que no hace falta repetirlo en cada cuadro.
+- Probar sombra en las piedras pequeñas y dejarla solo si cabe en el presupuesto.
+
+**Etapa 3. Oclusión de contacto**
+- `src/domain/contact-occlusion.js` (nuevo, sin Three.js): calcula el oscurecimiento alrededor de cada roca, con pruebas en `test/`.
+- `src/scene/rocks.js`: devuelve dónde colocó cada roca.
+- `src/scene/terrain.js`: horneado en una textura, se aplica solo a la luz indirecta. Cuesta una lectura de textura; se descarta GTAO porque volvería a dibujar toda la escena en un equipo que ya pierde cuadros en Retina.
+- Parte baja de las rocas algo más oscura.
+- **Fin del bloque A: capturas y confirmación.**
+
+### Bloque B: viento y polvo
+
+**Etapa 4. Modelo de viento**
+- `src/domain/wind.js` (nuevo, sin Three.js): dirección alineada con las dunas, velocidad con ráfagas y desplazamiento acumulado como integral exacta. Así las partículas no saltan al cambiar la velocidad y el resultado no depende de los FPS.
+- `test/wind.test.js`: determinismo por semilla, rangos, y que el desplazamiento sea coherente con la velocidad.
+- Leer el artículo completo de Newman et al. (2022) antes de fijar velocidades. Si no se pueden sustentar, quedan marcadas como ilustrativas.
+
+**Etapa 5. Polvo visible en tres capas**
+- **Suspendido** (`dust.js`): tamaño ajustado a la resolución, mezcla normal en lugar de solo aditiva, brillo a contraluz y densidad que sube con las ráfagas. Es licencia artística, porque el polvo real es demasiado fino para verse grano a grano, y así se documentará.
+- **Arena rasante** (`src/scene/saltation.js`, nuevo): trazos alargados en el sentido del viento, a ras de suelo y concentrados en las crestas. Usa una textura de alturas generada desde el dominio.
+- **Plumas de cresta y velos bajos** (`src/scene/dust-plumes.js`, nuevo): planos suaves animados que salen de las crestas y barren el suelo en cada ráfaga.
+- `sky.js`: los velos del cielo se mueven con el mismo viento.
+- `prefers-reduced-motion`: el polvo sigue visible, pero sin animación.
+
+**Etapa 6. Suelo**
+- `terrain.js`: bajar el ondulado amplio que dibuja las bandas oscuras en la duna derecha y alinear las ondulitas con el viento. Confirmar que el patrón de puntos ya no aparece tras la etapa 2.
+
+**Etapa 7. Cierre**
+- `docs/adr/0002-sombras-y-viento.md` y actualización de la leyenda en pantalla.
+- Registro aquí de lo hecho y de dónde quedó cada cosa, incluido cualquier ajuste a CLAUDE.md que haga falta.
+- `npm run build`, que nunca se ha ejecutado, y prueba de la versión generada.
+
+## Criterios de aceptación
+Los rangos son objetivos artísticos, no datos de Marte: no se encontró una fuente con la fracción de luz difusa para estas condiciones.
+
+| Área | Criterio | Base |
+|---|---|---|
+| Sombras | Sobre arena, la zona en sombra conserva entre 0.40 y 0.65 de la luz (mediana) | de 0.72 a 0.11 según la zona |
+| Sombras | Ningún núcleo de sombra por debajo de 0.20 | 0.11 |
+| Sombras | Nacen pegadas a la base y sin patrón de puntos, revisado en recortes ampliados | Despegadas y con puntos |
+| Polvo | Con viento normal, al menos 3 % de los píxeles cambia más de 3 % | 0.02 % |
+| Polvo | En ráfaga, al menos 8 % de los píxeles cambia más de 3 % | No hay ráfagas |
+| Polvo | Brillo medio de la imagen cambia 5 % o menos; sol y lunas siguen legibles | No aplica |
+| Viento | Se distingue movimiento entre capturas separadas 0.5 s | Casi imperceptible |
+| Rendimiento | A 1600×900, percentil 95 de 16.8 ms o menos | 16.8 ms |
+| Rendimiento | A 2592×1675, mediana de 16.7 ms y percentil 95 de 33.4 ms o menos | 16.7 y 33.4 ms |
+| Determinismo | Mismo `t`, misma imagen | Sin medición posible |
+| General | `npm test`, `npm run check` y `npm run build` sin errores | Build sin ejecutar |
+| Confirmación | El ingeniero lo revisa en su propia pantalla | Pendiente |
+
+Se permiten hasta 3 rondas de ajuste por bloque. Si tras la tercera falta algo, se para y se informa qué falta. No se hacen commits salvo que el ingeniero lo pida.
+
+## Riesgos
+- **CSM no se ha probado en esta escena.** Si falla o se excede del presupuesto, la alternativa es un único mapa concentrado en los primeros 280 m, a costa de menor calidad lejana.
+- **Rendimiento en Retina.** La fase añade trabajo a una escena que ya pierde cuadros. Si no se cumple el presupuesto, primero se reduce el número de partículas y luego el `pixelRatio`.
+- **Chrome invisible no equivale a la pantalla real.** Por eso la última confirmación es del ingeniero.
+- **Sigue siendo ilustrativa.** El terreno es procedural; "real" aquí significa creíble a la vista, no una reconstrucción de Jezero.
+
+## Fuentes y qué falta verificar
+| Dato | Fuente | Estado |
+|---|---|---|
+| τ típica en Jezero, cerca de 0.4–0.5 | [Mastcam-Z, BAAS](https://baas.aas.org/pub/2023n8i213p09) | Solo resumen |
+| Polvo de 1.0–1.3 µm de radio efectivo | [Estudio con cámaras de MSL](https://www.cosmos.esa.int/documents/1499429/1583871/CHENCHEN_H.pdf) | Otro sitio (Gale) y periodo de poco polvo |
+| Remolinos frecuentes y ráfagas que levantan polvo | [Newman et al. 2022](https://addi.ehu.eus/handle/10810/58188?show=full) | Solo resumen; leer completo en la etapa 4 |
+| Distancia Sol-Marte | [NASA Mars Fact Sheet](https://nssdc.gsfc.nasa.gov/planetary/factsheet/marsfact.html) | Consultada en copia archivada |
+| Sol de 0.35° visto desde Marte, penumbra y transmisión | Cálculo propio | Aproximación de primer orden |
