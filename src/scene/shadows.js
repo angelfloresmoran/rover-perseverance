@@ -87,15 +87,22 @@ export function createShadows(camera, parent) {
       };
       material.customProgramCacheKey = () => cacheKey;
     },
-    update() {
+    // Si el rover se movió, se recalcula la cascada cercana. Las demás pueden seguir en caché: el rover siempre está
+    // dentro de la cercana, y lo que se aleje de él antes de refrescarlas sigue quedando en esa misma cascada.
+    update({ nearObjectMoved = false } = {}) {
       camera.updateMatrixWorld();
       csm.update();
       csm.lights.forEach((light, index) => {
         const previous = lastRendered[index];
-        if (previous !== null && previous.distanceTo(light.position) <= moveLimits_m[index]) return;
+        const coverageValid = previous !== null && previous.distanceTo(light.position) <= moveLimits_m[index];
+        if (coverageValid && !(index === 0 && nearObjectMoved)) return;
         light.shadow.needsUpdate = true;
         lastRendered[index] = light.position.clone();
       });
+    },
+    // Tras agregar un objeto que proyecta sombra.
+    invalidate() {
+      lastRendered.fill(null);
     },
     // Llamar cuando cambia la proyección de la cámara.
     refit: fitCoverage,

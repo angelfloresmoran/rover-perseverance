@@ -1,10 +1,8 @@
 import * as THREE from 'three';
 import { bakeContactOcclusion } from '../domain/contact-occlusion.js';
+import { gridCoordinate_m, TERRAIN_SEGMENTS } from '../domain/terrain-grid.js';
 import { GLSL_NOISE } from './glsl-noise.js';
 import { HORIZON_COLOR, SUN_COLOR, SUN_DIRECTION } from './look.js';
-
-const HALF_SIZE_M = 7000;
-const SEGMENTS = 640;
 
 // Zona horneada: 0.31 m por texel alrededor de lo que se ve de cerca.
 const CONTACT_REGION = { centerX_m: 0, centerZ_m: -180, halfSize_m: 640, resolution: 2048 };
@@ -24,20 +22,21 @@ function createContactTexture(rockPlacements) {
   return texture;
 }
 
-function buildGeometry(terrain) {
-  const geometry = new THREE.PlaneGeometry(2, 2, SEGMENTS, SEGMENTS).rotateX(-Math.PI / 2);
+function buildGeometry(terrain, grid) {
+  // PlaneGeometry define la triangulación que `grid.heightAt_m` reproduce para que el rover pise esta malla.
+  const geometry = new THREE.PlaneGeometry(2, 2, TERRAIN_SEGMENTS, TERRAIN_SEGMENTS).rotateX(-Math.PI / 2);
   const positions = geometry.attributes.position;
   const rockiness = new Float32Array(positions.count);
   const duneHeight = new Float32Array(positions.count);
-  for (let i = 0; i < positions.count; i++) {
-    // Espaciado cuadrático: malla densa cerca del origen y gruesa a lo lejos.
-    const u = positions.getX(i);
-    const v = positions.getZ(i);
-    const x = Math.sign(u) * u * u * HALF_SIZE_M;
-    const z = Math.sign(v) * v * v * HALF_SIZE_M;
-    positions.setXYZ(i, x, terrain.heightAt_m(x, z), z);
-    rockiness[i] = terrain.rockinessAt(x, z);
-    duneHeight[i] = terrain.duneHeightAt_m(x, z);
+  for (let iz = 0; iz <= TERRAIN_SEGMENTS; iz++) {
+    const z = gridCoordinate_m(iz);
+    for (let ix = 0; ix <= TERRAIN_SEGMENTS; ix++) {
+      const x = gridCoordinate_m(ix);
+      const i = iz * (TERRAIN_SEGMENTS + 1) + ix;
+      positions.setXYZ(i, x, grid.vertexHeight_m(ix, iz), z);
+      rockiness[i] = terrain.rockinessAt(x, z);
+      duneHeight[i] = terrain.duneHeightAt_m(x, z);
+    }
   }
   geometry.setAttribute('aRockiness', new THREE.BufferAttribute(rockiness, 1));
   geometry.setAttribute('aDuneHeight', new THREE.BufferAttribute(duneHeight, 1));
@@ -149,12 +148,12 @@ function patchShader(shader, contactTexture) {
     );
 }
 
-export function createTerrainMesh(terrain, shadows, rockPlacements) {
+export function createTerrainMesh(terrain, grid, shadows, rockPlacements) {
   const material = new THREE.MeshStandardMaterial({ roughness: 0.96, metalness: 0 });
   const contactTexture = createContactTexture(rockPlacements);
   material.onBeforeCompile = (shader) => patchShader(shader, contactTexture);
   shadows.attach(material, 'terrain');
-  const mesh = new THREE.Mesh(buildGeometry(terrain), material);
+  const mesh = new THREE.Mesh(buildGeometry(terrain, grid), material);
   mesh.receiveShadow = true;
   mesh.castShadow = true;
   return mesh;

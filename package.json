@@ -8,6 +8,7 @@
     "build": "vite build",
     "test": "node --test test/",
     "check": "node scripts/check.mjs",
+    "check:drive": "node scripts/drive-check.mjs",
     "measure": "node scripts/measure-look.mjs"
   },
   "dependencies": {

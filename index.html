@@ -13,10 +13,20 @@
         font: 12px/1.4 system-ui, sans-serif; color: #fff; opacity: 0.8;
         text-shadow: 0 1px 3px #000; pointer-events: none;
       }
+      #caption strong { font-weight: 600; }
+      #rover-status {
+        position: fixed; left: 16px; top: 12px; max-width: calc(100vw - 32px); margin: 0; padding: 8px 12px;
+        font: 14px/1.4 system-ui, sans-serif; color: #fff; background: #4a1c10; border-radius: 4px;
+      }
     </style>
   </head>
   <body>
-    <p id="caption" style="margin:0">Escena ilustrativa: terreno procedural; sol y lunas agrandados; color del cielo con licencia artística.</p>
+    <p id="rover-status" role="alert" hidden>No se pudo cargar el modelo del rover. El resto de la escena sigue disponible.</p>
+    <p id="caption" style="margin:0">
+      <strong>WASD o flechas: conducir · Ratón: girar la vista</strong><br />
+      Rover: modelo 3D de NASA/JPL-Caltech a tamaño real; velocidad <span id="drive-speed"></span> respecto a la real.
+      Escena ilustrativa: terreno procedural; sol y lunas agrandados; color del cielo con licencia artística.
+    </p>
     <script type="module" src="/src/main.js"></script>
   </body>
 </html>

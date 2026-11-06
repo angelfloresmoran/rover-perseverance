@@ -3,7 +3,8 @@
 Este archivo tiene una sección por fase:
 - **Fase 1, parte 1:** el plan tal como se aprobó antes de ejecutar.
 - **Fase 1, parte 2:** lo que se hizo, cómo se hizo, para qué sirve cada componente y dónde encontrarlo.
-- **Fase 2:** sombras creíbles y viento visible, al final del archivo. **Bloque A hecho; bloque B pendiente de aprobación.**
+- **Fase 2:** sombras creíbles y viento visible. **Bloque A hecho (commit `f3d8e1b`); bloque B pendiente de aprobación.**
+- **Fase 3:** rover Perseverance conducible, al final del archivo. **Implementada, a la espera de revisión en pantalla del ingeniero.**
 
 Regla de trabajo desde la fase 2: cada fase se planifica aquí primero y no se implementa hasta que el ingeniero la confirme.
 
@@ -382,3 +383,220 @@ Medido con `npm run measure` a `t = 30`, con cámara fija. En tiempos, la cámar
 - **Margen para el bloque B:** a 1600×900 quedan unos 2.4 ms de GPU, y en Retina ya se pierden cuadros. Es el principal riesgo del polvo; posiblemente haya que bajar el `pixelRatio`.
 - **Alternativa a 8.5°:** solo se capturó; no se midió contra los criterios.
 - **Vistos en otros ángulos:** las rocas iluminadas de frente tienen manchas oscuras muy marcadas (ya existían) y mirando en dirección opuesta al sol se repiten bandas en las dunas (etapa 6). Las manchas no están en el alcance de ningún bloque.
+
+**Actualización:** el bloque A quedó confirmado por el ingeniero en el commit `f3d8e1b`. Su mensaje menciona polvo y ráfagas, pero el commit no modifica `dust.js` ni agrega viento: esa parte sigue pendiente en el bloque B.
+
+---
+
+# Fase 3: rover Perseverance conducible
+
+**Estado:** implementada; ver "Fase 3: registro" al final. El plan se conserva como se aprobó.
+
+## Objetivo
+Traer el modelo 3D oficial de Perseverance a tamaño real sobre el terreno, conducirlo con WASD, que deje huellas, que la cámara lo siga, y escribir en la consola qué piezas son cámaras para usarlas más adelante.
+
+## Lo que se comprobó del modelo
+
+| Aspecto | Hallazgo | Consecuencia |
+|---|---|---|
+| Descarga | HTTP 200, 4 987 176 bytes, GLB válido, sha-256 `10db7c03a5e63a5a3b3e7baa6243aa4918ba045fa8ff0a731d0217491adc727f` | Se fija el hash y una prueba lo verifica |
+| Compresión | Requiere `KHR_draco_mesh_compression`; carga con decodificador en 124 ms | El decodificador se sirve desde el proyecto, sin CDN |
+| Escala | Ya está en metros. Ancho 2.705 m (NASA 2.7), rueda 0.525 m (NASA 0.525) | **No se reescala.** Una prueba lo verifica |
+| Orientación | Frente en +Z; base en y = 0. Mástil a la derecha y RTG atrás, como el rover real | Solo hay que girarlo según el rumbo |
+| Pose inicial | **Mástil y brazo plegados** (altura 1.85 m) | Se aplica la animación incluida hasta mástil arriba y brazo guardado |
+| Mástil desplegado | Altura 2.23 m (NASA 2.2), cabeza a 2.0 m, brazo aún plegado hacia `t` = 2–4 s de las animaciones | Se elige el instante exacto en la implementación y se congela |
+| Ruedas | Una sola malla con 3 materiales, pero se separan limpiamente en 6 grupos (unos 5800 vértices cada uno) con centros conocidos | Se separan al cargar para que giren |
+| Suspensión | Una sola malla, no articulable | El cuerpo se inclina como un conjunto; las ruedas compensan poco en vertical. No es rocker-bogie articulado real |
+| Costo | 199 521 triángulos, 252 mallas, 47 materiales | Pasa de 24 a unas 276 llamadas de dibujo por cuadro. Hay que medirlo |
+| Vidrio | 3 materiales con `transmission = 1` | Three.js dibuja **toda la escena otra vez** cada cuadro si los hay. Se reemplazan por transparencia simple |
+| Metales | 23 materiales metálicos, y la escena no tiene mapa de entorno | Se verían casi negros. Se les da un entorno propio, sin alterar terreno ni rocas |
+| Licencia | El repositorio de NASA los declara "free and without copyright" y remite a sus guías de uso | Se atribuye a NASA/JPL-Caltech, sin insinuar respaldo de la NASA |
+
+### Piezas que son cámaras (`console.log` al cargar)
+No hay cámaras glTF: son piezas con nombre. Lista explícita, no un filtro por texto, porque "cam" dejaría fuera a WATSON e incluiría tapas:
+
+| Nombre en el modelo | Cámara real |
+|---|---|
+| `Mastcam_Z_cams` | Mastcam-Z |
+| `NavCams` | Navcams |
+| `hazcams_front`, `hazcams_rear` | Hazcams delanteras y traseras |
+| `WATSON` | WATSON (torreta del brazo) |
+| `Up_Look_Camera`, `Down_Look_Camera` | Cámaras de descenso, por su nombre; **por confirmar** |
+| `lens` | Lente en la cabeza del mástil, posiblemente SuperCam; **por confirmar** |
+
+`hazcams_*_cover*` y `hazcams_rear_wiring` son tapas y cableado: se imprimen aparte como accesorios. Si falta algún nombre, se avisa con `console.warn`.
+
+## Lo que se comprobó del terreno
+- **La malla visible no coincide con `heightAt_m`.** Diferencia de altura en 40 000 puntos al azar: hasta 100 m del origen, percentil 95 de 13 cm y máximo de 74 cm; hasta 300 m, 29 cm y 1.3 m. Con la función actual las ruedas flotarían o se hundirían. **El rover usará la misma triangulación que la malla.**
+- **Pendientes a escala de rover:** cerca del 5 % del área supera 30°, sobre todo las caras de avalancha. La NASA evita pasar de 30° y diseña para 45°. El rover se frena con la pendiente y se detiene al llegar a 30°.
+- **Rocas:** hay rocas de hasta 6.5 m, más que el rover. La NASA indica que pasa obstáculos del tamaño de la rueda (52.5 cm).
+
+## Decisiones a confirmar
+
+### 1. Velocidad
+La velocidad real máxima es de 152 m/h (4.2 cm/s): cruzar 10 m tardaría 4 minutos. **Recomiendo ×30, unos 1.27 m/s**, con el factor visible en pantalla. La constante real queda guardada aparte, y `Shift` no se agrega salvo que se pida. La alternativa es ×1, fiel pero poco manejable.
+
+### 2. Orden respecto al bloque B
+**Recomiendo terminar el rover primero**, como se pidió ahora. El polvo sigue casi invisible (0.02 %) y los dos compiten por el mismo margen de rendimiento, así que al retomar el bloque B habrá que medir con el rover en escena.
+
+## Alcance
+
+**Dentro:** modelo en `public/models/`, escala real, conducción, ruedas que giran, inclinación según el terreno, colisión con rocas grandes, límite de pendiente, huellas, cámara que sigue, lista de cámaras en consola.
+
+**Fuera:** vistas desde las cámaras del rover (quedan para el final), control del brazo o del mástil, física dinámica, energía y comunicaciones, polvo levantado por las ruedas, datos reales de Jezero.
+
+## Etapas
+
+**Etapa 0. Recursos**
+- `public/models/mars-2020-perseverance.glb`: nombre sin espacios, hash verificado por una prueba.
+- `public/draco/`: decodificador copiado de la versión instalada de Three.js; una prueba verifica que coincida.
+- `docs/data-sources.md` (nuevo): fuente, fecha, hash, licencia y atribución.
+
+**Etapa 1. Dominio, sin Three.js y con pruebas**
+- `src/domain/terrain-grid.js`: la cuadrícula y su triangulación, compartidas por la malla y el rover. La malla actual no debe cambiar: se comprueba con la misma imagen.
+- `src/domain/rover-spec.js`: dimensiones, posición de ruedas, velocidad y límites, con unidad y fuente, en un único lugar.
+- `src/domain/rover-kinematics.js`: paso fijo de 1/60 s, dirección con radio de giro, giro en el sitio, límite de pendiente, colisión y límite del área conducible antes del borde del cráter.
+- `src/domain/rover-stance.js`: contacto de las 6 ruedas, plano ajustado, inclinación y altura.
+- `src/domain/track-recorder.js`: registra tramos de huella cada cierta distancia.
+
+**Etapa 2. Modelo en escena (`src/scene/rover.js`)**
+- Carga con Draco y congela la pose desplegada.
+- Separa las ruedas, reemplaza el vidrio y añade el entorno de los metales.
+- Une todos sus materiales a las cascadas (`shadows.attach`); si no, recibirían el sol tres veces.
+- Imprime las cámaras en consola.
+- Si la carga falla: aviso en pantalla y escena funcionando. `window.__marsReady` espera al rover.
+
+**Etapa 3. Conducción (`src/app/rover-controller.js`, `src/app/keyboard.js`)**
+- W/S avanzan y retroceden; A/D giran; también flechas, por accesibilidad.
+- Las teclas se liberan al perder el foco, para que el rover no siga solo.
+- Simulación independiente de los FPS; el dibujo interpola entre pasos.
+- Con `?t=` no hay simulación: el rover queda en su pose inicial y la captura sigue siendo repetible.
+
+**Etapa 4. Huellas (`src/scene/tracks.js`)**
+- Cintas ajustadas a la malla, una por rueda, con surcos de las garras en el shader y sombras de la escena.
+- Búfer circular de longitud fija, para que la memoria no crezca. Menos marcadas en zonas de grava.
+
+**Etapa 5. Cámara y sombras**
+- `OrbitControls` sigue al rover, con suavizado independiente de los FPS. Vuelve detrás de él al conducir, salvo si el usuario giró la vista hace poco.
+- Sustituye al paneo lento. Distancia entre 5 y 60 m, sin atravesar el suelo.
+- `src/scene/shadows.js`: mientras el rover se mueve, se recalcula la cascada cercana. Las demás siguen en caché; hay que revisar que no queden sombras fantasma del rover en ellas.
+
+**Etapa 6. Cierre**
+- `docs/adr/0003-rover-conducible.md`, leyenda en pantalla y controles visibles.
+- Ajustar `measure` y `check`, medir y registrar aquí. Hasta 3 rondas de ajuste.
+
+## Criterios de aceptación
+| Área | Criterio |
+|---|---|
+| Tamaño | Ancho, largo y alto del modelo a menos de 5 % de 2.7 × 3.0 × 2.2 m |
+| Contacto | En un recorrido automático de prueba, la distancia rueda-suelo es de 5 cm o menos en el percentil 95, sobre la malla visible |
+| Conducción | Prueba real en Chrome: cada tecla mueve o gira como corresponde, y el rover se detiene al soltar o perder el foco |
+| Determinismo | Misma secuencia de teclas y misma semilla dan posición idéntica, a 30 o 144 FPS simulados |
+| Límites | No sube por encima de 30°, no atraviesa rocas de más de 52.5 cm ni sale del área |
+| Huellas | Visibles en captura detrás del rover, sin parpadeo ni flotación en recortes ampliados |
+| Cámara | Rover en cuadro durante todo el recorrido de prueba; la vista se puede seguir girando |
+| Consola | Imprime la lista de cámaras, con 0 errores y 0 advertencias en `npm run check` |
+| Fallo de carga | Con la descarga bloqueada, hay aviso visible y la escena sigue funcionando |
+| Rendimiento | Conduciendo a 1600×900, percentil 95 de 16.8 ms o menos; a 2592×1675, mediana de 16.7 ms y percentil 95 de 33.4 ms o menos |
+| General | `npm test`, `npm run check` y `npm run build` sin errores; la versión generada carga el modelo |
+| Confirmación | El ingeniero lo conduce en su propia pantalla |
+
+## Riesgos
+- **Rendimiento:** es el principal riesgo. Si no se cumple el presupuesto, en este orden: unir mallas por material, conservando por nombre las piezas de cámara; quitar sombra a piezas pequeñas; bajar el `pixelRatio`.
+- **Dirección visible:** las ruedas pueden girar, pero la horquilla forma parte de la suspensión, que no se articula. Si se ve mal al girar, las ruedas solo rodarán y el rumbo cambiará igual.
+- **Rocas pequeñas:** el rover las atraviesa visualmente, porque no hay física de contacto rueda-roca.
+- **Tamaño de las rocas:** las más grandes son decorativas y desproporcionadas frente al rover real.
+- **Cámaras por confirmar:** `lens`, `Up_Look_Camera` y `Down_Look_Camera` se identifican por nombre y ubicación, no por documentación del modelo.
+
+## Fuentes
+| Dato | Fuente |
+|---|---|
+| Modelo y condiciones de uso | [NASA-3D-Resources](https://github.com/nasa/NASA-3D-Resources), [guías de uso](https://www.nasa.gov/nasa-brand-center/images-and-media) |
+| 3 × 2.7 × 2.2 m, 1025 kg | [JPL, press kit](https://www.jpl.nasa.gov/news/press_kits/mars_2020/launch/quick_facts/) |
+| Rueda de 52.5 cm, 152 m/h | [NASA, ruedas](https://mars.nasa.gov/mars2020/spacecraft/rover/wheels) |
+| 45° de diseño, 30° en operación, obstáculos del tamaño de la rueda | [NASA, componentes del rover](https://science.nasa.gov/mission/mars-2020-perseverance/rover-components/) |
+
+Las cifras de NASA se leyeron en extractos de búsqueda; se revisarán las páginas completas al escribir `rover-spec.js`.
+
+---
+
+# Fase 3: registro
+
+## Estado
+- Aprobada por el ingeniero. Sin respuesta explícita en dos puntos, se aplicó lo recomendado: **velocidad ×30** y **rover antes que el bloque B**. Sol en 16°.
+- **Sin commit:** los cambios están en el árbol de trabajo.
+- `npm test`: 65 de 65. `npm run check`: 0 errores, 0 excepciones, 0 peticiones fallidas, 0 advertencias. `npm run check:drive`: 24 de 24. `npm run measure`: mismo `t`, misma imagen. `npm run build`: compila, con el aviso de paquete mayor de 500 kB; la versión generada se abrió y se condujo sin errores.
+
+## Criterios de aceptación
+| Área | Resultado | Cumple |
+|---|---|---|
+| Tamaño | 3.11 × 2.70 × 2.23 m frente a 3 × 2.7 × 2.2 m: 3.6, 0.2 y 1.5 % de diferencia | Sí |
+| Contacto | Rueda-suelo de 5 cm o menos en el percentil 95, en un recorrido de 106 s sobre la malla y las rocas reales | Sí |
+| Conducción | Teclas en Chrome real: W, S, A, D y flechas; se detiene al soltar y al perder el foco | Sí |
+| Determinismo | Estado idéntico a 30, 60 y 144 FPS | Sí |
+| Límites | No pasa de 30°, no atraviesa rocas grandes, no sale del área | Sí |
+| Huellas | Visibles y con marcas de las garras en capturas y recortes; el reciclado tras 600 m tiene prueba | Sí |
+| Cámara | Rover en cuadro en todo el recorrido (máximo 0.32 de la mitad de la pantalla); la vista se puede girar | Sí |
+| Consola | Imprime la lista de cámaras | Sí |
+| Fallo de carga | Con la descarga bloqueada: aviso visible y escena a 61 cuadros por segundo | Sí |
+| Rendimiento | Tabla siguiente | Sí, con poco margen |
+| Confirmación en pantalla | | **Pendiente** |
+
+## Rendimiento
+Chrome invisible, Apple M1 Pro. El tiempo por cuadro está limitado a 60 FPS.
+
+| Medida | Antes | Quieto | Conduciendo | Presupuesto |
+|---|---|---|---|---|
+| Llamadas de dibujo | 24 | 304 | 304 | |
+| Triángulos por cuadro | 1.98 M | 2.25 M | 2.25 M | |
+| 1600×900, mediana / percentil 95 | 16.7 / 16.7 ms | 16.7 / 16.8 ms | 16.7 / 16.8 ms | 16.8 ms: cumple |
+| 2592×1675, mediana / percentil 95 | 16.7 / 33.4 ms | 16.7 / 33.3 ms | 16.7 / 33.4 ms | 16.7 y 33.4 ms: cumple |
+| Cuadros contados en 6 s a 2592×1675 | 300 | 300 | **269** | Sin criterio |
+| GPU a 1600×900, mediana | 13.8 ms | 17.0 ms | 14.7 ms | Sin criterio |
+
+Conduciendo en Retina se pasa de unos 51 a 46 cuadros por segundo. El presupuesto se cumple, pero **a 1600×900 casi no queda margen de GPU**. El polvo del bloque B no cabrá sin optimizar antes.
+
+## Decisiones durante la ejecución
+| Decisión | Motivo |
+|---|---|
+| Se agregó `scripts/drive-check.mjs` (`npm run check:drive`), no prevista en el plan | Deja repetible la prueba de conducción real, antes pensada como manual |
+| Rocas de más de 52.5 cm como obstáculo | La página de la NASA cita también 40 cm; se mantuvo el plan |
+| Huellas por multiplicación, sin material iluminado | Conservan sombra y bruma del suelo, sin costo de luces |
+| No se unieron mallas por material | El presupuesto se cumple sin hacerlo; queda disponible |
+| Dirección visible en las ruedas, hasta unos 20° | En la captura de cerca no choca con la horquilla |
+| El paneo lento se eliminó | Lo sustituye la cámara que sigue al rover |
+| `window.__marsReady` espera al rover | Sin esto, las mediciones capturarían la escena sin él |
+
+## Corrección encontrada
+Las reescrituras de `measure` insertaban una instrucción tras un `if` sin llaves, y la señal de "listo" se activaba antes de tiempo. No afectó a los resultados anteriores por la espera posterior. Se corrigió en `src/main.js`.
+
+## Componentes nuevos o modificados
+| Archivo | Para qué sirve | Qué tocar aquí |
+|---|---|---|
+| `public/models/mars-2020-perseverance.glb` (nuevo) | Modelo oficial, sin modificar | No editar: una prueba verifica su hash |
+| `public/draco/` (nuevo) | Decodificador del modelo | Volver a copiar al actualizar Three.js |
+| `docs/data-sources.md` (nuevo) | Origen, hash, licencia y fuentes del rover | |
+| `docs/adr/0003-rover-conducible.md` (nuevo) | Decisión y qué es real | |
+| `src/domain/terrain-grid.js` (nuevo) | Alturas y triangulación compartidas por malla y rover | Resolución de la malla |
+| `src/domain/rover-spec.js` (nuevo) | Datos del rover con fuente, y parámetros de manejo | `DRIVE_TIME_SCALE`, `DRIVE_TUNING` |
+| `src/domain/rover-kinematics.js` (nuevo) | Movimiento, pendientes, colisión y límites | Reglas de movimiento |
+| `src/domain/rover-stance.js` (nuevo) | Inclinación y contacto de las ruedas | Recorrido de las ruedas |
+| `src/domain/track-recorder.js` (nuevo) | Registro de huellas en búfer circular | |
+| `src/app/rover-controller.js` (nuevo) | Paso fijo e interpolación | `ROVER_START` |
+| `src/app/keyboard.js` (nuevo) | Teclas de conducción | Asignación de teclas |
+| `src/scene/rover.js` (nuevo) | Carga, pose, ruedas, materiales y consola | `CAMERA_PARTS`, `DEPLOYED_POSE_S` |
+| `src/scene/tracks.js` (nuevo) | Dibujo de las huellas | Aspecto y capacidad |
+| `src/scene/chase-camera.js` (nuevo) | Cámara que sigue al rover | Distancias y suavizado |
+| `src/scene/shadows.js` | Recalcula la cascada cercana si el rover se mueve | |
+| `src/scene/terrain.js`, `rocks.js` | Malla desde la cuadrícula; altura de cada roca | |
+| `src/main.js`, `index.html` | Integración, controles visibles y atribución | |
+| `scripts/drive-check.mjs` (nuevo), `measure-look.mjs` | Prueba de conducción; medición conduciendo | |
+| `test/` | `terrain-grid`, `rover-domain`, `rover-scene`, `rover-assets`, `track-recorder`, `tracks`, `keyboard` (nuevos) | |
+
+## Límites y pendientes
+- **Sin comprobar a ojo:** ni la fluidez en tu pantalla, ni que las ruedas se vean rodar en el sentido correcto (está calculado, no observado en movimiento), ni posibles saltos de sombra al recalcularse.
+- **Cámaras por confirmar:** `lens`, `Up_Look_Camera` y `Down_Look_Camera` no tienen documentación en el modelo.
+- **Cámara y rocas:** la cámara no choca con ellas, y una roca puede tapar al rover o quedar atravesada. Hay rocas tan grandes que estorban la vista.
+- **Rocas pequeñas:** el rover las atraviesa visualmente.
+- **Sombras en el encuadre nuevo:** mediana 0.392 y mínimo 0.169, frente a los objetivos de la fase 2 (0.40 y 0.20). La vista cambió y la medida incluye ahora el rover; el mínimo es un punto muy pequeño en el contacto de una roca cercana. No se ajustó.
+- **Bloque B:** sigue pendiente; el polvo sigue casi invisible.

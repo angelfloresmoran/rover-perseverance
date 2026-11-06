@@ -13,6 +13,8 @@ const VIEW_CENTER = { x: 0, z: -180 };
 
 // Los recortes dejan la roca más pequeña que su escala: radio medio de apoyo como fracción de ella.
 const FOOTPRINT_RADIUS = 0.85;
+// Altura media que asoma sobre el suelo, como fracción de la escala: recortada arriba y semienterrada abajo.
+const EXPOSED_HEIGHT = 0.65;
 
 // Rocas colocadas a mano para dar primer plano a la composición: [x, z, escala_m].
 const HERO_ROCKS = [
@@ -131,7 +133,7 @@ function rockColor(random, target) {
 }
 
 function placeInstance(mesh, index, terrain, random, x, z, scale_m, dummy, color, placements) {
-  placements.push({ x_m: x, z_m: z, radius_m: scale_m * FOOTPRINT_RADIUS });
+  placements.push({ x_m: x, z_m: z, radius_m: scale_m * FOOTPRINT_RADIUS, height_m: scale_m * EXPOSED_HEIGHT });
   dummy.position.set(x, terrain.heightAt_m(x, z) - scale_m * 0.1, z);
   dummy.rotation.set((random() - 0.5) * 0.5, random() * Math.PI * 2, (random() - 0.5) * 0.5);
   dummy.scale.setScalar(scale_m);

@@ -143,6 +143,9 @@ async function measureTiming(browser, { label, viewport, scale }) {
   const info = await page.evaluate(renderInfo);
   const steady = await page.evaluate(sampleFrames, { duration_ms: TIMING_DURATION_MS, forceShadowUpdate: false });
   const update = await page.evaluate(sampleFrames, { duration_ms: TIMING_DURATION_MS / 2, forceShadowUpdate: true });
+  await page.keyboard.down('KeyW');
+  const driving = await page.evaluate(sampleFrames, { duration_ms: TIMING_DURATION_MS, forceShadowUpdate: false });
+  await page.keyboard.up('KeyW');
   await context.close();
   return {
     label,
@@ -151,6 +154,7 @@ async function measureTiming(browser, { label, viewport, scale }) {
     frame: frameTimeStats(steady.frames_ms),
     gpu: { ...frameTimeStats(steady.gpu_ms), renderer: info.gpu },
     gpu_with_shadow_update: frameTimeStats(update.gpu_ms),
+    driving: { frame: frameTimeStats(driving.frames_ms), gpu: frameTimeStats(driving.gpu_ms) },
   };
 }
 
